@@ -1,0 +1,27 @@
+{
+  "name": "dnse-terminal",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "node --use-env-proxy ./node_modules/next/dist/bin/next dev",
+    "build": "node --use-env-proxy ./node_modules/next/dist/bin/next build",
+    "start": "node --use-env-proxy ./node_modules/next/dist/bin/next start",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "lightweight-charts": "^5.2.1",
+    "next": "^16.4.3",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/node": "^24.10.0",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "eslint": "^9.39.1",
+    "eslint-config-next": "^16.4.3",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.9.3"
+  }
+}

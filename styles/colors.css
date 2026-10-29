@@ -1,0 +1,53 @@
+/*
+  File màu gốc của DNSE Desk.
+  Muốn đổi giao diện, chỉ sửa các giá trị trong khối :root bên dưới.
+  Không ghi mã màu trực tiếp ở file CSS hoặc component khác.
+*/
+
+:root {
+  /* Nền trang. Entrade X dùng gần như đen. */
+  --bg: #0c0c0e;
+  --bg-elevated: #111114;
+
+  /* Thẻ bảng giá và panel. */
+  --surface: #17181c;
+  --surface-2: #1e2026;
+  --surface-3: #262830;
+  --surface-selected: #22242b;
+
+  /* Viền. */
+  --line: rgba(255, 255, 255, 0.08);
+  --line-strong: rgba(255, 255, 255, 0.16);
+
+  /* Chữ. Bốn cỡ duy nhất: 13 phụ, 14 nội dung, 16 tiêu đề, 20 giá. */
+  --fs-13: 13px;
+  --fs-14: 14px;
+  --fs-16: 16px;
+  --fs-20: 20px;
+  --text: #efefef;
+  --text-secondary: #9aa0aa;
+  --text-muted: #6d7380;
+  --text-on-solid: #ffffff;
+
+  /* Giá: tăng, giảm, tham chiếu, trần, sàn. */
+  --up: #22c55e;
+  --down: #f43f5e;
+  --ref: #f5c451;
+  --ceiling: #c084fc;
+  --floor: #38bdf8;
+
+  /* Nút mua / bán. */
+  --buy: #16a34a;
+  --sell: #ef4444;
+
+  /* Chip đang chọn, gạch tab, viền focus. */
+  --accent: #ef4444;
+  --accent-soft: rgba(239, 68, 68, 0.16);
+
+  /* Biểu đồ. */
+  --chart-grid: rgba(255, 255, 255, 0.06);
+  --shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+
+  /* Lớp phủ hộp thoại. */
+  --overlay: rgba(0, 0, 0, 0.72);
+}
