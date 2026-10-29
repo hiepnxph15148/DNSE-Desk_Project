@@ -523,54 +523,13 @@ export function Terminal() {
           );
         })}
       </section>
-
-      <section className="panel quote" aria-live="polite">
-          <div className="quote-title">
-            <div className="quote-heading">
-              <SymbolLogo symbol={active.symbol} />
-              <div>
-              <h2>{active.symbol}</h2>
-              <p>
-                {active.name !== active.symbol
-                  ? `${active.name}${active.exchange ? ` · ${active.exchange}` : ""}`
-                  : "Chờ dữ liệu thị trường"}
-              </p>
-              </div>
-            </div>
-            <div className={`quote-price num tone-${tone}`}>
-              <strong>{formatPrice(active.price)}</strong>
-              <span>{formatChange(active.change)} · {formatPct(active.changePercent)}</span>
-            </div>
-          </div>
-          <div className="bands num">
-            <span>Trần <b className="tone-ceiling">{formatPrice(active.ceiling)}</b></span>
-            <span>TC <b className="tone-ref">{formatPrice(active.reference)}</b></span>
-            <span>Sàn <b className="tone-floor">{formatPrice(active.floor)}</b></span>
-            <span>Cao <b>{formatPrice(active.high)}</b></span>
-            <span>Thấp <b>{formatPrice(active.low)}</b></span>
-            <span>KL <b>{formatQty(active.volume)}</b></span>
-          </div>
-          <div className="resolutions" role="group" aria-label="Khung thời gian">
-            {RESOLUTIONS.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                className="ghost"
-                aria-pressed={resolution === item.id}
-                onClick={() => setResolution(item.id)}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-          <PriceChart candles={candles} resolution={resolution} />
-        </section>
       </>
       )}
 
       {screen === "order" && (
       <>
       <div className="trade">
+        <div className="trade-main">
         <section className="panel quote" aria-live="polite">
           <div className="quote-title">
             <div className="quote-heading">
@@ -611,6 +570,23 @@ export function Terminal() {
             ))}
           </div>
         </section>
+        <section className="panel chart-panel">
+          <div className="resolutions" role="group" aria-label="Khung thời gian">
+            {RESOLUTIONS.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className="ghost"
+                aria-pressed={resolution === item.id}
+                onClick={() => setResolution(item.id)}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+          <PriceChart candles={candles} resolution={resolution} />
+        </section>
+        </div>
         <div className="trade-ticket">
           <div className="account-line panel">
             <label htmlFor="market-type">Thị trường</label>
