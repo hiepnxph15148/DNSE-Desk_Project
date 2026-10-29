@@ -1,27 +1,24 @@
 "use client";
 
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { OrderTicket } from "@/components/order-ticket";
-import { PriceChart } from "@/components/price-chart";
+import { OrderDesk, type TapePrint } from "@/components/order-desk";
 import { Sparkline } from "@/components/sparkline";
 import { SymbolLogo } from "@/components/symbol-logo";
+import { UserMenu } from "@/components/user-menu";
+import { useMarketStream } from "@/components/use-market-stream";
 import {
-  canCancel,
   clockLabel,
-  dateLabel,
   formatChange,
-  formatNumber,
   formatPct,
   formatPrice,
   formatQty,
-  orderStatusLabel,
   priceTone,
-  sideLabel,
 } from "@/lib/format";
 import type { BoardRow, Candle, OrderRow, PositionRow } from "@/lib/dnse/normalize";
+import type { MarketEvent, PriceLevel } from "@/lib/dnse/stream-types";
 import type { MarketType } from "@/lib/dnse/validate";
 import { matchSymbols, type ListedSymbol } from "@/lib/dnse/catalog";
-import { DEFAULT_WATCHLIST, POPULAR_SYMBOLS, RESOLUTIONS, type Resolution } from "@/lib/symbols";
+import { DEFAULT_WATCHLIST, POPULAR_SYMBOLS, type Resolution } from "@/lib/symbols";
 
 const WATCH_KEY = "dnse-desk-watchlist";
 
@@ -98,6 +95,9 @@ export function Terminal() {
   const [now, setNow] = useState<Date | null>(null);
   const [booting, setBooting] = useState(true);
   const [screen, setScreen] = useState<"board" | "order">("board");
+  const [book, setBook] = useState<{ symbol: string; bids: PriceLevel[]; asks: PriceLevel[] } | null>(null);
+  const [tape, setTape] = useState<TapePrint[]>([]);
+  const tapeSeq = useRef(0);
 
   useEffect(() => {
     const saved = localStorage.getItem(WATCH_KEY);
@@ -252,12 +252,47 @@ export function Terminal() {
     };
   }, [ready, refresh, loadSymbol]);
 
+  const stream = useMarketStream(symbols, ready && Boolean(status?.ok), (event: MarketEvent) => {
+    if (event.kind === "book") {
+      setBook({ symbol: event.symbol, bids: event.bids, asks: event.asks });
+      return;
+    }
+    if (event.kind === "trade" && event.price != null) {
+      const id = tapeSeq.current + 1;
+      tapeSeq.current = id;
+      const print = { id, symbol: event.symbol, price: event.price, quantity: event.quantity, at: Date.now() };
+      setTape((current) => [print, ...current].slice(0, 80));
+    }
+    if (event.kind !== "trade" && event.kind !== "secdef") return;
+    const merge = (row: BoardRow): BoardRow => {
+      if (row.symbol !== event.symbol) return row;
+      if (event.kind === "secdef") {
+        const reference = event.reference ?? row.reference;
+        const change = row.price != null && reference != null ? row.price - reference : row.change;
+        const changePercent = change != null && reference ? (change / reference) * 100 : row.changePercent;
+        return { ...row, reference, ceiling: event.ceiling ?? row.ceiling, floor: event.floor ?? row.floor, change, changePercent };
+      }
+      const price = event.price ?? row.price;
+      const change = price != null && row.reference != null ? price - row.reference : row.change;
+      const changePercent = change != null && row.reference ? (change / row.reference) * 100 : row.changePercent;
+      return {
+        ...row,
+        price,
+        volume: event.volume ?? row.volume,
+        high: event.high ?? row.high,
+        low: event.low ?? row.low,
+        change,
+        changePercent,
+      };
+    };
+    setRows((current) => current.map(merge));
+    setQuote((current) => (current && current.symbol === event.symbol ? merge(current) : current));
+  });
+
   const board = useMemo(
     () => symbols.map((symbol) => rows.find((row) => row.symbol === symbol) ?? blankRow(symbol)),
     [rows, symbols],
   );
-  const active = quote ?? board.find((row) => row.symbol === selected) ?? blankRow(selected);
-  const tone = priceTone(active.price, active.reference, active.ceiling, active.floor);
   const visible = useMemo(
     () => board.filter((row) => market === "ALL" || row.exchange === market),
     [board, market],
@@ -360,13 +395,6 @@ export function Terminal() {
     }
   }
 
-  function removeSymbol(symbol: string) {
-    if (symbols.length <= 1) return;
-    const next = symbols.filter((item) => item !== symbol);
-    setSymbols(next);
-    if (selected === symbol) setSelected(next[0]);
-  }
-
   async function cancelOrder(orderId: string) {
     if (!accountNo) return;
     const params = new URLSearchParams({ accountNo, orderId, marketType });
@@ -380,18 +408,19 @@ export function Terminal() {
   }
 
   return (
-    <main className="desk">
+    <main className={screen === "order" ? "desk desk-order" : "desk"}>
       <header className="topbar">
         <div className="brand">
           <div className="mark" aria-hidden="true">Đ</div>
-          <div>
-            <h1>DNSE Desk</h1>
-            <p>LightSpeed API · chứng khoán cơ sở</p>
-          </div>
+          <h1>DNSE</h1>
         </div>
-        <div className="clock">
-          <strong className="num">{now ? clockLabel(now) : "—"}</strong>
-          <span>{now ? dateLabel(now) : "Giờ Hà Nội"}</span>
+        <nav className="screen-tabs" aria-label="Màn hình">
+          <button type="button" aria-pressed={screen === "board"} onClick={() => setScreen("board")}>Bảng giá</button>
+          <button type="button" aria-pressed={screen === "order"} onClick={() => setScreen("order")}>Đặt lệnh</button>
+        </nav>
+        <div className="topbar-actions">
+          <UserMenu />
+          <time className="clock num">{now ? clockLabel(now) : "—"}</time>
         </div>
       </header>
 
@@ -401,11 +430,6 @@ export function Terminal() {
         </div>
       )}
       {error && <div className="banner" role="alert">{error}</div>}
-
-      <nav className="screen-tabs" aria-label="Màn hình">
-        <button type="button" aria-pressed={screen === "board"} onClick={() => setScreen("board")}>Bảng giá</button>
-        <button type="button" aria-pressed={screen === "order"} onClick={() => setScreen("order")}>Đặt lệnh</button>
-      </nav>
 
       {screen === "board" && (
       <>
@@ -508,7 +532,6 @@ export function Terminal() {
                     <strong>{row.symbol}</strong>
                     <small>{name}</small>
                   </button>
-                  <button type="button" className="texty card-remove" aria-label={`Bỏ ${row.symbol}`} onClick={() => removeSymbol(row.symbol)}>×</button>
                 </div>
                 <Sparkline values={sparks[row.symbol] ?? []} />
               </div>
@@ -527,169 +550,34 @@ export function Terminal() {
       )}
 
       {screen === "order" && (
-      <>
-      <div className="trade">
-        <div className="trade-main">
-        <section className="panel quote" aria-live="polite">
-          <div className="quote-title">
-            <div className="quote-heading">
-              <SymbolLogo symbol={active.symbol} />
-              <div>
-                <h2>{active.symbol}</h2>
-                <p>
-                  {active.name !== active.symbol
-                    ? `${active.name}${active.exchange ? ` · ${active.exchange}` : ""}`
-                    : "Chờ dữ liệu thị trường"}
-                </p>
-              </div>
-            </div>
-            <div className={`quote-price num tone-${tone}`}>
-              <strong>{formatPrice(active.price)}</strong>
-              <span>{formatChange(active.change)} · {formatPct(active.changePercent)}</span>
-            </div>
-          </div>
-          <div className="bands num">
-            <span>Trần <b className="tone-ceiling">{formatPrice(active.ceiling)}</b></span>
-            <span>TC <b className="tone-ref">{formatPrice(active.reference)}</b></span>
-            <span>Sàn <b className="tone-floor">{formatPrice(active.floor)}</b></span>
-            <span>Cao <b>{formatPrice(active.high)}</b></span>
-            <span>Thấp <b>{formatPrice(active.low)}</b></span>
-            <span>KL <b>{formatQty(active.volume)}</b></span>
-          </div>
-          <div className="symbol-picks" role="listbox" aria-label="Chọn mã để đặt lệnh">
-            {board.map((row) => (
-              <button
-                key={row.symbol}
-                type="button"
-                className="ghost"
-                aria-pressed={row.symbol === selected}
-                onClick={() => selectSymbol(row.symbol)}
-              >
-                {row.symbol}
-              </button>
-            ))}
-          </div>
-        </section>
-        <section className="panel chart-panel">
-          <div className="resolutions" role="group" aria-label="Khung thời gian">
-            {RESOLUTIONS.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                className="ghost"
-                aria-pressed={resolution === item.id}
-                onClick={() => setResolution(item.id)}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-          <PriceChart candles={candles} resolution={resolution} />
-        </section>
-        </div>
-        <div className="trade-ticket">
-          <div className="account-line panel">
-            <label htmlFor="market-type">Thị trường</label>
-            <select id="market-type" value={marketType} onChange={(event) => setMarketType(event.target.value as MarketType)}>
-              <option value="STOCK">Cơ sở</option>
-              <option value="DERIVATIVE">Phái sinh</option>
-            </select>
-          </div>
-          <OrderTicket
-            symbol={selected}
-            lastPrice={active.price}
-            accounts={portfolio?.accounts ?? []}
-            accountNo={accountNo}
-            marketType={marketType}
-            tokenActive={Boolean(status?.tradingToken)}
-            onAccount={setAccountNo}
-            onPlaced={() => { void loadPortfolio(); }}
-            onTokenChange={() => { void loadStatus(); }}
-          />
-        </div>
-      </div>
-
-      <div className="ledger">
-        <section className="panel">
-          <div className="panel-head">
-            <h2>Sổ lệnh trong ngày</h2>
-            <span className="num">{portfolio?.balance.availableCash != null ? `${formatNumber(portfolio.balance.availableCash)} đ` : ""}</span>
-          </div>
-          {portfolio && portfolio.orders.length > 0 ? (
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Mã</th>
-                    <th>Chiều</th>
-                    <th>KL</th>
-                    <th>Giá</th>
-                    <th>Khớp</th>
-                    <th>Trạng thái</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {portfolio.orders.map((order) => (
-                    <tr key={order.id}>
-                      <td>{order.symbol}</td>
-                      <td className={order.side === "NB" ? "tone-up" : "tone-down"}>{sideLabel(order.side)}</td>
-                      <td className="num">{formatQty(order.quantity)}</td>
-                      <td className="num">{formatPrice(order.price)}</td>
-                      <td className="num">{formatQty(order.filled)}</td>
-                      <td>{orderStatusLabel(order.status)}</td>
-                      <td>
-                        {canCancel(order.status) && (
-                          <button type="button" className="texty" onClick={() => cancelOrder(order.id)}>Hủy</button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <p className="empty">{booting ? "Đang đọc sổ lệnh." : "Chưa có lệnh trong ngày, hoặc chưa kết nối tài khoản."}</p>
-          )}
-        </section>
-        <section className="panel">
-          <div className="panel-head">
-            <h2>Vị thế</h2>
-            <span className="num">{portfolio?.balance.totalCash != null ? `Tổng tiền ${formatNumber(portfolio.balance.totalCash)}` : ""}</span>
-          </div>
-          {portfolio && portfolio.positions.length > 0 ? (
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Mã</th>
-                    <th>KL</th>
-                    <th>Giá vốn</th>
-                    <th>Giá thị trường</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {portfolio.positions.map((position) => (
-                    <tr key={`${position.id}-${position.symbol}`}>
-                      <td>
-                        <button type="button" className="texty" onClick={() => position.symbol && selectSymbol(position.symbol)}>
-                          {position.symbol || position.id}
-                        </button>
-                      </td>
-                      <td className="num">{formatQty(position.quantity)}</td>
-                      <td className="num">{formatPrice(position.averagePrice)}</td>
-                      <td className="num">{formatPrice(position.marketPrice)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <p className="empty">{booting ? "Đang đọc vị thế." : "Chưa có vị thế trên tiểu khoản này."}</p>
-          )}
-        </section>
-      </div>
-      </>
+        <OrderDesk
+          now={now}
+          rows={board}
+          catalog={catalog}
+          selected={selected}
+          quote={quote}
+          stream={stream}
+          book={book?.symbol === selected ? { bids: book.bids, asks: book.asks } : null}
+          prints={tape}
+          candles={candles}
+          resolution={resolution}
+          marketType={marketType}
+          booting={booting}
+          orders={portfolio?.orders ?? []}
+          positions={portfolio?.positions ?? []}
+          availableCash={portfolio?.balance.availableCash ?? null}
+          totalCash={portfolio?.balance.totalCash ?? null}
+          accounts={portfolio?.accounts ?? []}
+          accountNo={accountNo}
+          tokenActive={Boolean(status?.tradingToken)}
+          onResolution={setResolution}
+          onMarketType={setMarketType}
+          onSelect={selectSymbol}
+          onCancel={(orderId) => { void cancelOrder(orderId); }}
+          onAccount={setAccountNo}
+          onPlaced={() => { void loadPortfolio(); }}
+          onTokenChange={() => { void loadStatus(); }}
+        />
       )}
     </main>
   );

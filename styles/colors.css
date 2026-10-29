@@ -18,6 +18,7 @@
   /* Viền. */
   --line: rgba(255, 255, 255, 0.08);
   --line-strong: rgba(255, 255, 255, 0.16);
+  --scrollbar: rgba(255, 255, 255, 0.38);
 
   /* Chữ. Bốn cỡ duy nhất: 13 phụ, 14 nội dung, 16 tiêu đề, 20 giá. */
   --fs-13: 13px;

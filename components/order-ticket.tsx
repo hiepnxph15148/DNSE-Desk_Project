@@ -10,6 +10,7 @@ type Account = { id: string; name: string };
 type Props = {
   symbol: string;
   lastPrice: number | null;
+  pricePick?: { id: number; price: number } | null;
   accounts: Account[];
   accountNo: string;
   marketType: MarketType;
@@ -20,8 +21,8 @@ type Props = {
 };
 
 const ORDER_TYPES = [
-  { id: "LO", label: "LO giới hạn" },
-  { id: "MTL", label: "MTL thị trường" },
+  { id: "LO", label: "LO" },
+  { id: "MTL", label: "MTL" },
   { id: "ATO", label: "ATO" },
   { id: "ATC", label: "ATC" },
 ];
@@ -29,6 +30,7 @@ const ORDER_TYPES = [
 export function OrderTicket({
   symbol,
   lastPrice,
+  pricePick,
   accounts,
   accountNo,
   marketType,
@@ -53,6 +55,10 @@ export function OrderTicket({
   useEffect(() => {
     if (lastPrice != null) setPrice(String(lastPrice));
   }, [symbol, lastPrice]);
+
+  useEffect(() => {
+    if (pricePick) setPrice(String(pricePick.price));
+  }, [pricePick]);
 
   useEffect(() => {
     if (!accountNo || !symbol) return;
@@ -128,7 +134,7 @@ export function OrderTicket({
           symbol,
           side,
           orderType,
-          price: Number(price || 0),
+          price: orderType === "LO" ? Number(price || 0) : 0,
           quantity: Number(quantity),
           loanPackageId: Number(loanPackageId),
           marketType,
@@ -147,9 +153,9 @@ export function OrderTicket({
   }
 
   return (
-    <section className="panel">
+    <section className="panel ticket-rail">
       <div className="panel-head">
-        <h2>Đặt lệnh</h2>
+        <h2>{symbol}</h2>
         <span className={tokenActive ? "ok" : "tone-ref"}>{tokenActive ? "Đã xác thực" : "Chưa có token"}</span>
       </div>
       <div className="ticket">
@@ -162,19 +168,29 @@ export function OrderTicket({
             ))}
           </select>
         </label>
-        <div className="side-switch">
-          <button type="button" className="ghost buy" aria-pressed={side === "NB"} onClick={() => setSide("NB")}>Mua</button>
-          <button type="button" className="ghost sell" aria-pressed={side === "NS"} onClick={() => setSide("NS")}>Bán</button>
+        <div className="order-types" role="group" aria-label="Loại lệnh">
+          {ORDER_TYPES.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className="ghost"
+              aria-pressed={orderType === item.id}
+              onClick={() => setOrderType(item.id)}
+            >
+              {item.label}
+            </button>
+          ))}
         </div>
         <label className="field">
-          <span>Loại lệnh</span>
-          <select value={orderType} onChange={(event) => setOrderType(event.target.value)}>
-            {ORDER_TYPES.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
-          </select>
-        </label>
-        <label className="field">
           <span>Giá</span>
-          <input className="num" inputMode="decimal" value={price} onChange={(event) => setPrice(event.target.value)} />
+          <input
+            className="num"
+            inputMode="decimal"
+            value={orderType === "LO" ? price : ""}
+            placeholder={orderType === "LO" ? "" : orderType}
+            disabled={orderType !== "LO"}
+            onChange={(event) => setPrice(event.target.value)}
+          />
         </label>
         <label className="field">
           <span>Khối lượng</span>
@@ -216,14 +232,24 @@ export function OrderTicket({
           {tokenActive && <button type="button" className="texty" onClick={clearToken}>Xóa token</button>}
         </div>
         {note && <p className="note">{note}</p>}
-        <button
-          type="button"
-          className={`solid ${side === "NB" ? "buy" : "sell"}`}
-          disabled={!tokenActive || !accountNo || !loanPackageId}
-          onClick={() => setConfirming(true)}
-        >
-          Gửi lệnh {side === "NB" ? "mua" : "bán"} {symbol}
-        </button>
+        <div className="ticket-actions">
+          <button
+            type="button"
+            className="solid buy"
+            disabled={!tokenActive || !accountNo || !loanPackageId}
+            onClick={() => { setSide("NB"); setConfirming(true); }}
+          >
+            MUA
+          </button>
+          <button
+            type="button"
+            className="solid sell"
+            disabled={!tokenActive || !accountNo || !loanPackageId}
+            onClick={() => { setSide("NS"); setConfirming(true); }}
+          >
+            BÁN
+          </button>
+        </div>
       </div>
       {confirming && (
         <div className="modal-back" role="presentation" onClick={() => setConfirming(false)}>
