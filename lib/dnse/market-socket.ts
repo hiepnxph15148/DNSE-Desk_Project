@@ -1,5 +1,7 @@
 import { createHmac } from "node:crypto";
 import { credentialStatus } from "@/lib/dnse/client";
+import { readStreamBook } from "@/lib/dnse/stream-book";
+import { inferStreamKind, pickNum, readStreamLimits, streamPayload } from "@/lib/dnse/stream-limits";
 import type { MarketEvent, PriceLevel } from "@/lib/dnse/stream-types";
 
 type Listener = (event: MarketEvent) => void;
@@ -127,7 +129,7 @@ class MarketHub {
           if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ action: "pong" }));
           return;
         }
-        this.publish(data);
+        this.publishEnvelope(data);
       });
 
       socket.addEventListener("close", () => {
@@ -175,10 +177,64 @@ class MarketHub {
     }));
   }
 
-  private publish(data: Record<string, unknown>) {
-    const symbol = typeof data.symbol === "string" ? data.symbol.toUpperCase() : "";
-    const type = typeof data.T === "string" ? data.T : "";
+  private publishEnvelope(envelope: Record<string, unknown>) {
+    const action = typeof envelope.action === "string" ? envelope.action : "";
+    if (
+      action === "welcome"
+      || action === "auth_success"
+      || action === "auth_error"
+      || action === "error"
+      || action === "ping"
+      || action === "pong"
+      || action === "subscribe"
+    ) {
+      return;
+    }
+
+    const batch = envelope.data ?? envelope.payload;
+    if (Array.isArray(batch)) {
+      for (const item of batch) {
+        if (item && typeof item === "object") this.publishEnvelope(item as Record<string, unknown>);
+      }
+      return;
+    }
+
+    const payload = streamPayload(envelope);
+    if (this.publishLegacy(payload)) return;
+
+    const symbol = textSymbol(payload) ?? textSymbol(envelope);
     if (!symbol) return;
+
+    const kind = inferStreamKind(payload, envelope);
+    if (kind === "sd" || kind === "te") {
+      const price = pickNum(payload, ["matchPrice", "price", "lastPrice"]);
+      const limits = readStreamLimits(payload, price);
+      this.emit({
+        kind: "secdef",
+        symbol,
+        reference: limits.reference,
+        ceiling: limits.ceiling,
+        floor: limits.floor,
+      });
+      if (kind === "te" && price != null) this.emitTrade(symbol, payload, price);
+      return;
+    }
+    if (kind === "t" || kind === "e") {
+      const price = pickNum(payload, ["matchPrice", "price", "lastPrice", "expectedPrice"]);
+      if (price != null) this.emitTrade(symbol, payload, price);
+      return;
+    }
+    if (kind === "q") {
+      const book = readStreamBook(payload);
+      this.emit({ kind: "book", symbol, bids: book.bids, asks: book.asks });
+    }
+  }
+
+  /** DNSE bản cũ: field `T` + symbol phẳng (EventSource từng chạy ổn với path này). */
+  private publishLegacy(data: Record<string, unknown>) {
+    const symbol = textSymbol(data);
+    const type = typeof data.T === "string" ? data.T : "";
+    if (!symbol || !type) return false;
     if (type === "t" || type === "te") {
       this.emit({
         kind: "trade",
@@ -189,11 +245,11 @@ class MarketHub {
         high: asNumber(data.highestPrice),
         low: asNumber(data.lowestPrice),
       });
-      return;
+      return true;
     }
     if (type === "q") {
       this.emit({ kind: "book", symbol, bids: levels(data.bid), asks: levels(data.offer) });
-      return;
+      return true;
     }
     if (type === "sd") {
       this.emit({
@@ -203,7 +259,21 @@ class MarketHub {
         ceiling: asNumber(data.ceilingPrice),
         floor: asNumber(data.floorPrice),
       });
+      return true;
     }
+    return false;
+  }
+
+  private emitTrade(symbol: string, payload: Record<string, unknown>, price: number) {
+    this.emit({
+      kind: "trade",
+      symbol,
+      price,
+      quantity: pickNum(payload, ["matchQtty", "quantity", "lastQty"]),
+      volume: pickNum(payload, ["totalVolumeTraded", "accumulatedVolume", "volume", "totalVolume"]),
+      high: pickNum(payload, ["highestPrice", "high"]),
+      low: pickNum(payload, ["lowestPrice", "low"]),
+    });
   }
 
   private startHeartbeat(socket: WebSocket) {
@@ -223,6 +293,11 @@ class MarketHub {
       });
     }, 3_000);
   }
+}
+
+function textSymbol(record: Record<string, unknown>) {
+  const raw = record.symbol ?? record.Symbol;
+  return typeof raw === "string" && raw.trim() ? raw.trim().toUpperCase() : "";
 }
 
 const globalHub = globalThis as typeof globalThis & { __dnseMarketHub?: MarketHub };

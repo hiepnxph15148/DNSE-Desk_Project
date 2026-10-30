@@ -1,7 +1,7 @@
 import { LoginPanel } from "@/components/login-panel";
 import { googleAuthConfigured } from "@/lib/auth-options";
 
-type Props = { searchParams: Promise<{ callbackUrl?: string }> };
+type Props = { searchParams: Promise<{ callbackUrl?: string; error?: string }> };
 
 export default async function LoginPage({ searchParams }: Props) {
   const params = await searchParams;
@@ -10,7 +10,7 @@ export default async function LoginPage({ searchParams }: Props) {
 
   return (
     <main className="login-page">
-      <LoginPanel googleReady={googleReady} callbackUrl={callbackUrl} />
+      <LoginPanel googleReady={googleReady} callbackUrl={callbackUrl} error={params.error} />
     </main>
   );
 }

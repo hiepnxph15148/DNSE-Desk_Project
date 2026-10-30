@@ -51,4 +51,13 @@
 
   /* Lớp phủ hộp thoại. */
   --overlay: rgba(0, 0, 0, 0.72);
+
+  /* Thanh trên: đồng hồ, liên thông, tài khoản. */
+  --desk-clock: #38bdf8;
+  --user-badge: #f5c451;
+  --user-badge-text: #141414;
+  --signout-bg: #d7f064;
+  --signout-text: #141414;
+  --link-status-bg: #1a1c22;
+  --link-status-ready: #22c55e;
 }

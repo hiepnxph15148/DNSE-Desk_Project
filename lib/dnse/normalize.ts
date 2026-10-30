@@ -94,8 +94,34 @@ function withChange(row: Omit<BoardRow, "change" | "changePercent">): BoardRow {
   return { ...row, change, changePercent };
 }
 
+/** Tính lại +/- và % sau khi cập nhật giá hoặc TC/trần/sàn. */
+export function deriveBoardChange(row: Omit<BoardRow, "change" | "changePercent">): BoardRow {
+  return withChange(row);
+}
+
+export type SecdefLimits = {
+  symbol: string;
+  marketId: string;
+  reference: number | null;
+  ceiling: number | null;
+  floor: number | null;
+};
+
+/** Doc DNSE: GET /price/:symbol/secdef — basicPrice, ceilingPrice, floorPrice. */
+export function readSecdefLimits(symbol: string, body: unknown): SecdefLimits {
+  const definition = asRecord(body);
+  return {
+    symbol,
+    marketId: text(definition.marketId),
+    reference: firstNum(definition, ["basicPrice", "referencePrice", "refPrice", "reference"]),
+    ceiling: firstNum(definition, ["ceilingPrice", "ceilPrice", "highLimitPrice", "ceiling"]),
+    floor: firstNum(definition, ["floorPrice", "lowLimitPrice", "floor"]),
+  };
+}
+
 export function readQuote(symbol: string, secdef: unknown, latest: unknown, instrument?: unknown): BoardRow {
   const definition = asRecord(secdef);
+  const limits = readSecdefLimits(symbol, secdef);
   const latestRecord = asRecord(latest);
   const trades = Array.isArray(latestRecord.trades) ? latestRecord.trades : [];
   const trade = asRecord(trades[0] ?? latestRecord);
@@ -109,9 +135,9 @@ export function readQuote(symbol: string, secdef: unknown, latest: unknown, inst
     name: text(info.shortName || info.name || definition.symbolName || definition.shortName) || symbol,
     exchange: MARKET_LABEL[marketId] ?? marketId,
     price,
-    reference: firstNum(definition, ["basicPrice", "referencePrice", "refPrice", "prevClosePrice"]),
-    ceiling: firstNum(definition, ["ceilingPrice", "ceilPrice", "highLimitPrice"]),
-    floor: firstNum(definition, ["floorPrice", "lowLimitPrice"]),
+    reference: limits.reference,
+    ceiling: limits.ceiling,
+    floor: limits.floor,
     high: firstNum(trade, ["highestPrice", "high"]) ?? firstNum(definition, ["high", "highest", "highPrice"]),
     low: firstNum(trade, ["lowestPrice", "low"]) ?? firstNum(definition, ["low", "lowest", "lowPrice"]),
     volume: firstNum(trade, ["totalVolumeTraded", "accumulatedVolume", "volume"])

@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
 import { DnseApiError, DnseConfigError } from "@/lib/dnse/client";
+import { friendlyDnseError } from "@/lib/dnse/friendly-error";
+
+export { friendlyDnseError };
 
 export function jsonError(error: unknown) {
   if (error instanceof DnseConfigError) {
@@ -7,7 +10,7 @@ export function jsonError(error: unknown) {
   }
   if (error instanceof DnseApiError) {
     return NextResponse.json(
-      { error: error.message, code: "DNSE", status: error.status },
+      { error: friendlyDnseError(error.message), code: "DNSE", status: error.status },
       { status: error.status >= 400 && error.status < 600 ? error.status : 502 },
     );
   }

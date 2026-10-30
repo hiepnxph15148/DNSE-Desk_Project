@@ -1,7 +1,10 @@
 import type { Metadata } from "next";
 import { Roboto } from "next/font/google";
 import { AuthProvider } from "@/components/auth-provider";
+import { ensureMarketWsServer } from "@/lib/dnse/market-ws-server";
 import "./globals.css";
+
+ensureMarketWsServer();
 
 const sans = Roboto({
   subsets: ["latin", "vietnamese"],

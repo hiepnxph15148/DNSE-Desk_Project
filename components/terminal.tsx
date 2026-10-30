@@ -1,13 +1,16 @@
 "use client";
 
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { OrderDesk, type TapePrint } from "@/components/order-desk";
+import { useSession } from "next-auth/react";
+import { OrderDesk } from "@/components/order-desk";
+import { bookFingerprint } from "@/lib/dnse/book-snapshot";
+import { appendTapePrint, mergeTapeCaches, type TapePrint } from "@/lib/dnse/tape";
 import { Sparkline } from "@/components/sparkline";
 import { SymbolLogo } from "@/components/symbol-logo";
+import { DeskClock, MarketLinkStatus } from "@/components/topbar-meta";
 import { UserMenu } from "@/components/user-menu";
 import { useMarketStream } from "@/components/use-market-stream";
 import {
-  clockLabel,
   formatChange,
   formatPct,
   formatPrice,
@@ -70,6 +73,8 @@ async function readJson(response: Response) {
 }
 
 export function Terminal() {
+  const { status: sessionStatus } = useSession();
+  const authed = sessionStatus === "authenticated";
   const [symbols, setSymbols] = useState(DEFAULT_WATCHLIST);
   const [ready, setReady] = useState(false);
   const [selected, setSelected] = useState(DEFAULT_WATCHLIST[0]);
@@ -98,6 +103,86 @@ export function Terminal() {
   const [book, setBook] = useState<{ symbol: string; bids: PriceLevel[]; asks: PriceLevel[] } | null>(null);
   const [tape, setTape] = useState<TapePrint[]>([]);
   const tapeSeq = useRef(0);
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
+  const booksCache = useRef(new Map<string, { bids: PriceLevel[]; asks: PriceLevel[] }>());
+  const bookFpBySymbol = useRef(new Map<string, string>());
+  const tapeBySymbol = useRef(new Map<string, TapePrint[]>());
+  const tapeBootstrapped = useRef(new Set<string>());
+  const symbolsRef = useRef(symbols);
+  symbolsRef.current = symbols;
+  const pendingBook = useRef<{ symbol: string; bids: PriceLevel[]; asks: PriceLevel[] } | null>(null);
+  const pendingTape = useRef<TapePrint[]>([]);
+  const uiFrame = useRef<number | null>(null);
+  const streamStateRef = useRef<"off" | "connecting" | "live" | "down">("off");
+  const secdefReady = useRef(new Set<string>());
+
+  const applyTapePrint = useCallback((print: TapePrint) => {
+    const next = appendTapePrint(tapeBySymbol.current.get(print.symbol) ?? [], print);
+    tapeBySymbol.current.set(print.symbol, next);
+    if (print.symbol === selectedRef.current) setTape(next);
+  }, []);
+
+  const flushPendingTape = useCallback(() => {
+    if (pendingTape.current.length === 0) return;
+    const batch = pendingTape.current;
+    pendingTape.current = [];
+    for (const print of batch) applyTapePrint(print);
+  }, [applyTapePrint]);
+
+  const flushMarketSide = useCallback(() => {
+    uiFrame.current = null;
+    const symbol = selectedRef.current;
+
+    const bookPayload = pendingBook.current;
+    if (bookPayload) {
+      pendingBook.current = null;
+      const fp = bookFingerprint(bookPayload.bids, bookPayload.asks);
+      if (bookFpBySymbol.current.get(bookPayload.symbol) !== fp) {
+        bookFpBySymbol.current.set(bookPayload.symbol, fp);
+        booksCache.current.set(bookPayload.symbol, { bids: bookPayload.bids, asks: bookPayload.asks });
+        if (bookPayload.symbol === symbol) {
+          setBook({ symbol: bookPayload.symbol, bids: bookPayload.bids, asks: bookPayload.asks });
+        }
+      }
+    }
+
+    flushPendingTape();
+  }, [flushPendingTape]);
+
+  const scheduleMarketSide = useCallback(() => {
+    if (uiFrame.current != null) return;
+    uiFrame.current = requestAnimationFrame(flushMarketSide);
+  }, [flushMarketSide]);
+
+  const loadSessionTape = useCallback(async (symbol: string, mode: "bootstrap" | "gap" = "bootstrap") => {
+    flushPendingTape();
+    const cachedBefore = tapeBySymbol.current.get(symbol) ?? [];
+    const response = await fetch(`/api/market/trades?symbol=${encodeURIComponent(symbol)}`);
+    const body = await readJson(response);
+    if (!response.ok) return;
+    const incoming = Array.isArray(body.prints) ? (body.prints as TapePrint[]) : [];
+    const cachedAfter = tapeBySymbol.current.get(symbol) ?? cachedBefore;
+    const merged = mergeTapeCaches(cachedAfter, incoming);
+    tapeSeq.current = merged.reduce((max, item) => Math.max(max, item.id), tapeSeq.current);
+    tapeBySymbol.current.set(symbol, merged);
+    if (mode === "bootstrap") tapeBootstrapped.current.add(symbol);
+    if (selectedRef.current === symbol) setTape(merged);
+  }, [flushPendingTape]);
+
+  useEffect(() => {
+    flushPendingTape();
+    const cached = booksCache.current.get(selected);
+    setBook(cached ? { symbol: selected, bids: cached.bids, asks: cached.asks } : null);
+    setTape(tapeBySymbol.current.get(selected) ?? []);
+  }, [flushPendingTape, selected]);
+
+  useEffect(() => {
+    if (!authed || !status?.ok) return;
+    const cachedTape = tapeBySymbol.current.get(selected) ?? [];
+    if (tapeBootstrapped.current.has(selected) && cachedTape.length > 0) return;
+    void loadSessionTape(selected, "bootstrap");
+  }, [authed, loadSessionTape, selected, status?.ok]);
 
   useEffect(() => {
     const saved = localStorage.getItem(WATCH_KEY);
@@ -121,7 +206,7 @@ export function Terminal() {
   }, [ready, symbols]);
 
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || !authed) return;
     let cancel = false;
     setCatalogState("loading");
     fetch("/api/market/symbols")
@@ -141,7 +226,7 @@ export function Terminal() {
     return () => {
       cancel = true;
     };
-  }, [ready]);
+  }, [authed, ready]);
 
   useEffect(() => {
     const tick = () => setNow(new Date());
@@ -158,13 +243,38 @@ export function Terminal() {
   }, []);
 
   const loadBoard = useCallback(async () => {
-    const response = await fetch(`/api/market/board?symbols=${symbols.join(",")}`);
+    const list = symbols.join(",");
+    const response = await fetch(`/api/market/board?symbols=${list}`);
     const body = await readJson(response);
     if (!response.ok) {
       if (body.code !== "CONFIG") setError(body.error ?? "Không tải được bảng giá.");
       return;
     }
-    setRows(body.rows ?? []);
+    const missingLimits = symbols.filter((symbol) => !secdefReady.current.has(symbol));
+    const secdefBody = missingLimits.length === 0
+      ? { rows: [] }
+      : await readJson(await fetch(`/api/market/secdef?boardId=G1&symbols=${missingLimits.join(",")}`));
+    if (missingLimits.length > 0) {
+      console.log("[secdef] trần / sàn / tham chiếu", secdefBody);
+    }
+    const limits = new Map<string, { reference: number | null; ceiling: number | null; floor: number | null }>(
+      (Array.isArray(secdefBody.rows) ? secdefBody.rows : []).map((row: { symbol: string; reference: number | null; ceiling: number | null; floor: number | null }) => [row.symbol, row]),
+    );
+    setRows((current) => {
+      const previous = new Map(current.map((row) => [row.symbol, row]));
+      return (body.rows ?? []).map((row: BoardRow) => {
+        const kept = previous.get(row.symbol);
+        const band = limits.get(row.symbol);
+        const reference = band?.reference ?? kept?.reference ?? row.reference;
+        const ceiling = band?.ceiling ?? kept?.ceiling ?? row.ceiling;
+        const floor = band?.floor ?? kept?.floor ?? row.floor;
+        const price = row.price;
+        const change = price != null && reference != null ? price - reference : row.change;
+        const changePercent = change != null && reference ? (change / reference) * 100 : row.changePercent;
+        if (reference != null) secdefReady.current.add(row.symbol);
+        return { ...row, reference, ceiling, floor, change, changePercent };
+      });
+    });
     setError("");
   }, [symbols]);
 
@@ -218,26 +328,29 @@ export function Terminal() {
   const refresh = useCallback(async () => {
     const current = await loadStatus();
     if (!current.ok) {
+      setError("");
       setBooting(false);
-      return;
+      return current;
     }
     await Promise.all([loadBoard(), loadPortfolio()]);
     setBooting(false);
+    return current;
   }, [loadBoard, loadPortfolio, loadStatus]);
 
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || !authed) return;
     const handle = window.setTimeout(() => {
       void loadSparks();
     }, 0);
     return () => window.clearTimeout(handle);
-  }, [ready, loadSparks]);
+  }, [authed, ready, loadSparks]);
 
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || !authed) return;
     const handle = window.setTimeout(() => {
-      void refresh();
-      void loadSymbol();
+      void refresh().then((body) => {
+        if (body?.ok) void loadSymbol();
+      });
     }, 0);
     const id = window.setInterval(() => {
       if (document.visibilityState === "visible") void refresh();
@@ -250,18 +363,25 @@ export function Terminal() {
       window.clearInterval(id);
       window.clearInterval(candles);
     };
-  }, [ready, refresh, loadSymbol]);
+  }, [authed, ready, refresh, loadSymbol]);
 
   const stream = useMarketStream(symbols, ready && Boolean(status?.ok), (event: MarketEvent) => {
     if (event.kind === "book") {
-      setBook({ symbol: event.symbol, bids: event.bids, asks: event.asks });
+      pendingBook.current = { symbol: event.symbol, bids: event.bids, asks: event.asks };
+      scheduleMarketSide();
       return;
     }
-    if (event.kind === "trade" && event.price != null) {
-      const id = tapeSeq.current + 1;
-      tapeSeq.current = id;
-      const print = { id, symbol: event.symbol, price: event.price, quantity: event.quantity, at: Date.now() };
-      setTape((current) => [print, ...current].slice(0, 80));
+    if (event.kind === "trade" && event.price != null && symbolsRef.current.includes(event.symbol)) {
+      tapeSeq.current += 1;
+      const at = Date.now();
+      pendingTape.current.push({
+        id: tapeSeq.current,
+        symbol: event.symbol,
+        price: event.price,
+        quantity: event.quantity,
+        at,
+      });
+      scheduleMarketSide();
     }
     if (event.kind !== "trade" && event.kind !== "secdef") return;
     const merge = (row: BoardRow): BoardRow => {
@@ -288,6 +408,14 @@ export function Terminal() {
     setRows((current) => current.map(merge));
     setQuote((current) => (current && current.symbol === event.symbol ? merge(current) : current));
   });
+
+  useEffect(() => {
+    const prev = streamStateRef.current;
+    streamStateRef.current = stream;
+    if (stream === "live" && (prev === "down" || prev === "connecting") && tapeBootstrapped.current.has(selected)) {
+      void loadSessionTape(selected, "gap");
+    }
+  }, [loadSessionTape, selected, stream]);
 
   const board = useMemo(
     () => symbols.map((symbol) => rows.find((row) => row.symbol === symbol) ?? blankRow(symbol)),
@@ -355,7 +483,9 @@ export function Terminal() {
   }, [suggestOpen]);
 
   function selectSymbol(symbol: string) {
+    flushPendingTape();
     setSelected(symbol);
+    setTape(tapeBySymbol.current.get(symbol) ?? []);
     const row = board.find((item) => item.symbol === symbol);
     if (row) setQuote(row);
   }
@@ -408,7 +538,7 @@ export function Terminal() {
   }
 
   return (
-    <main className={screen === "order" ? "desk desk-order" : "desk"}>
+    <main className={screen === "order" ? "desk desk-order is-order-screen" : "desk"}>
       <header className="topbar">
         <div className="brand">
           <div className="mark" aria-hidden="true">Đ</div>
@@ -419,8 +549,9 @@ export function Terminal() {
           <button type="button" aria-pressed={screen === "order"} onClick={() => setScreen("order")}>Đặt lệnh</button>
         </nav>
         <div className="topbar-actions">
+          <DeskClock now={now} />
+          <MarketLinkStatus state={stream} />
           <UserMenu />
-          <time className="clock num">{now ? clockLabel(now) : "—"}</time>
         </div>
       </header>
 
@@ -429,7 +560,7 @@ export function Terminal() {
           {status.error ?? "Chưa kết nối được DNSE."}
         </div>
       )}
-      {error && <div className="banner" role="alert">{error}</div>}
+      {error && error !== status?.error ? <div className="banner" role="alert">{error}</div> : null}
 
       {screen === "board" && (
       <>
@@ -550,6 +681,7 @@ export function Terminal() {
       )}
 
       {screen === "order" && (
+        <div className="order-screen">
         <OrderDesk
           now={now}
           rows={board}
@@ -578,6 +710,7 @@ export function Terminal() {
           onPlaced={() => { void loadPortfolio(); }}
           onTokenChange={() => { void loadStatus(); }}
         />
+        </div>
       )}
     </main>
   );

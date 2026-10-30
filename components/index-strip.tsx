@@ -65,9 +65,34 @@ function IndexChart({ points, reference, tone }: { points: IndexSpark[]; referen
     return ((clock - SESSION_OPEN) / (SESSION_CLOSE - SESSION_OPEN)) * 100;
   };
   const yOf = (price: number) => 4 + ((max - price) / span) * 40;
-  const pathOf = (group: IndexSpark[]) => group.map((point) => `${xOf(point.time)},${yOf(point.close)}`).join(" ");
-  const morning = points.filter((point) => xOf(point.time) <= ((11 * 60 + 30 - SESSION_OPEN) / (SESSION_CLOSE - SESSION_OPEN)) * 100);
-  const afternoon = points.filter((point) => xOf(point.time) >= ((13 * 60 - SESSION_OPEN) / (SESSION_CLOSE - SESSION_OPEN)) * 100);
+  const clockOf = (time: number) => {
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Asia/Ho_Chi_Minh",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(new Date(time * 1000));
+    return Number(parts.find((part) => part.type === "hour")?.value ?? "0") * 60
+      + Number(parts.find((part) => part.type === "minute")?.value ?? "0");
+  };
+  const xOfClock = (clock: number) => ((clock - SESSION_OPEN) / (SESSION_CLOSE - SESSION_OPEN)) * 100;
+  const LUNCH_START = 11 * 60 + 30;
+  const LUNCH_END = 13 * 60;
+  const ordered = [...points].sort((left, right) => left.time - right.time);
+  const line: string[] = [];
+  for (let index = 0; index < ordered.length; index += 1) {
+    const point = ordered[index];
+    const clock = clockOf(point.time);
+    const previous = ordered[index - 1];
+    if (previous) {
+      const previousClock = clockOf(previous.time);
+      if (previousClock <= LUNCH_START && clock >= LUNCH_END) {
+        line.push(`${xOfClock(LUNCH_START)},${yOf(previous.close)}`);
+        line.push(`${xOfClock(LUNCH_END)},${yOf(previous.close)}`);
+      }
+    }
+    line.push(`${xOf(point.time)},${yOf(point.close)}`);
+  }
   const marks = [10, 11, 13, 15];
 
   return (
@@ -87,8 +112,7 @@ function IndexChart({ points, reference, tone }: { points: IndexSpark[]; referen
             />
           );
         })}
-        {morning.length > 1 ? <polyline className="index-spark-line" points={pathOf(morning)} /> : null}
-        {afternoon.length > 1 ? <polyline className="index-spark-line" points={pathOf(afternoon)} /> : null}
+        {line.length > 1 ? <polyline className="index-spark-line" points={line.join(" ")} /> : null}
       </svg>
       <div className="index-spark-axis">
         {marks.map((hour) => (

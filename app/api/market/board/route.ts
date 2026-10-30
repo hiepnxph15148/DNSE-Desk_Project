@@ -14,17 +14,11 @@ function isFatal(error: unknown) {
 }
 
 async function loadSymbol(symbol: string, instrument: unknown): Promise<BoardRow> {
-  const [secdef, latest] = await Promise.all([
-    dnseRequest(`/price/${symbol}/secdef?boardId=G1`).catch((error: unknown) => {
-      if (isFatal(error)) throw error;
-      return null;
-    }),
-    dnseRequest(`/price/${symbol}/trades/latest?boardId=G1`).catch((error: unknown) => {
-      if (isFatal(error)) throw error;
-      return null;
-    }),
-  ]);
-  return readQuote(symbol, secdef, latest, instrument);
+  const latest = await dnseRequest(`/price/${symbol}/trades/latest?boardId=G1`).catch((error: unknown) => {
+    if (isFatal(error)) throw error;
+    return null;
+  });
+  return readQuote(symbol, null, latest, instrument);
 }
 
 export async function GET(request: NextRequest) {

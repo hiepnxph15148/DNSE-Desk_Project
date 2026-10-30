@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { AgGridReact } from "ag-grid-react";
 import {
   AllCommunityModule,
@@ -16,7 +16,6 @@ import { PriceChart } from "@/components/price-chart";
 import { SymbolLogo } from "@/components/symbol-logo";
 import {
   canCancel,
-  clockLabel,
   formatNumber,
   formatPct,
   formatPrice,
@@ -29,7 +28,10 @@ import type { ListedSymbol } from "@/lib/dnse/catalog";
 import type { BoardRow, Candle, OrderRow, PositionRow } from "@/lib/dnse/normalize";
 import type { PriceLevel } from "@/lib/dnse/stream-types";
 import type { MarketType } from "@/lib/dnse/validate";
+import { marketLinkStatusLabel, type MarketLinkState } from "@/lib/market-link";
+import type { TapePrint } from "@/lib/dnse/tape";
 import { RESOLUTIONS, type Resolution } from "@/lib/symbols";
+import { OrderMarketSide } from "@/components/order-market-side";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
@@ -48,15 +50,9 @@ const gridTheme = themeQuartz.withPart(colorSchemeDark).withParams({
   spacing: 5,
 });
 
-type StreamState = "off" | "connecting" | "live" | "down";
+type StreamState = MarketLinkState;
 
-export type TapePrint = {
-  id: number;
-  symbol: string;
-  price: number | null;
-  quantity: number | null;
-  at: number;
-};
+export type { TapePrint } from "@/lib/dnse/tape";
 
 type WatchRow = BoardRow & { label: string };
 
@@ -87,13 +83,6 @@ type Props = {
   onAccount: (accountNo: string) => void;
   onPlaced: () => void;
   onTokenChange: () => void;
-};
-
-const STREAM_LABEL: Record<StreamState, string> = {
-  off: "Socket tắt",
-  connecting: "Đang nối socket",
-  live: "Socket sống",
-  down: "Socket ngắt",
 };
 
 function toneColor(tone: ReturnType<typeof priceTone>) {
@@ -140,9 +129,9 @@ export function OrderDesk(props: Props) {
   const deskRef = useRef<HTMLDivElement>(null);
   const listed = props.rows.find((row) => row.symbol === props.selected) ?? props.rows[0];
   const active = props.quote && props.quote.symbol === props.selected ? props.quote : listed;
-  const reference = active?.reference ?? null;
-  const ceiling = active?.ceiling ?? null;
-  const floor = active?.floor ?? null;
+  const reference = active?.reference ?? listed?.reference ?? null;
+  const ceiling = active?.ceiling ?? listed?.ceiling ?? null;
+  const floor = active?.floor ?? listed?.floor ?? null;
 
   const watchRows = useMemo<WatchRow[]>(() => props.rows.map((row) => {
     const listed = props.catalog.find((item) => item.symbol === row.symbol);
@@ -219,18 +208,11 @@ export function OrderDesk(props: Props) {
     { field: "marketPrice", headerName: "Giá TT", minWidth: 100, type: "rightAligned", valueFormatter: (params) => formatPrice(params.value) },
   ], []);
 
-  const depth = Math.max(props.book?.bids.length ?? 0, props.book?.asks.length ?? 0, 0);
-  const depthRows = Array.from({ length: Math.min(depth, 8) }, (_, index) => ({
-    bid: props.book?.bids[index],
-    ask: props.book?.asks[index],
-  }));
-  const prints = props.prints.filter((item) => item.symbol === props.selected).slice(0, 24);
-
-  function pickPrice(price: number | null) {
-    if (price == null || !active) return;
+  const pickPrice = useCallback((price: number | null) => {
+    if (price == null) return;
     setPricePick({ id: Date.now(), price });
-    props.onSelect(active.symbol);
-  }
+    props.onSelect(props.selected);
+  }, [props.onSelect, props.selected]);
 
   function startBlotterDrag(event: React.PointerEvent<HTMLButtonElement>) {
     event.preventDefault();
@@ -272,7 +254,7 @@ export function OrderDesk(props: Props) {
         {watchOpen && <>
         <div className="order-watch-head">
           <strong>Theo dõi</strong>
-          <span className={props.stream === "live" ? "ok" : "tone-ref"}>{STREAM_LABEL[props.stream]}</span>
+          <span className={props.stream === "live" ? "ok" : "tone-ref"}>{marketLinkStatusLabel(props.stream)}</span>
         </div>
         <input
           aria-label="Lọc mã trong bảng"
@@ -337,65 +319,19 @@ export function OrderDesk(props: Props) {
             <span className="pane-tip" role="tooltip">Mở bước giá</span>
           </button>
         )}
-        {sideOpen && <>
-        <section className="order-depth panel">
-        <div className="panel-head">
-          <h2>Bước giá</h2>
-          <span className="num">{active ? formatPrice(active.price) : ""}</span>
-        </div>
-        <div className="depth-head num">
-          <span>KL mua</span>
-          <span>Giá mua</span>
-          <span>Giá bán</span>
-          <span>KL bán</span>
-        </div>
-        <div className="depth-list">
-          {depthRows.map((level, index) => {
-            const bidTone = priceTone(level.bid?.price, reference, ceiling, floor);
-            const askTone = priceTone(level.ask?.price, reference, ceiling, floor);
-            return (
-              <div className="depth-row num" key={index}>
-                <span>{formatQty(level.bid?.quantity)}</span>
-                <button type="button" className={`tone-${bidTone}`} onClick={() => pickPrice(level.bid?.price ?? null)}>
-                  {formatPrice(level.bid?.price)}
-                </button>
-                <button type="button" className={`tone-${askTone}`} onClick={() => pickPrice(level.ask?.price ?? null)}>
-                  {formatPrice(level.ask?.price)}
-                </button>
-                <span>{formatQty(level.ask?.quantity)}</span>
-              </div>
-            );
-          })}
-        </div>
-          {depth === 0 && <p className="empty">{props.stream === "live" ? "Chưa có lệnh chờ." : "Đang chờ bước giá."}</p>}
-        </section>
-        <section className="order-tape panel">
-          <div className="panel-head">
-            <h2>Khớp lệnh</h2>
-          </div>
-          <div className="tape-head num">
-            <span>Giờ</span>
-            <span>Giá</span>
-            <span>+/−</span>
-            <span>KL</span>
-          </div>
-          <div className="tape-list">
-            {prints.length === 0 && <p className="empty">Chưa có khớp lệnh mới.</p>}
-            {prints.map((item) => {
-              const tone = priceTone(item.price, reference, ceiling, floor);
-              const delta = item.price != null && reference != null ? item.price - reference : null;
-              return (
-                <div className="tape-row num" key={item.id}>
-                  <span>{clockLabel(new Date(item.at))}</span>
-                  <button type="button" className={`tone-${tone}`} onClick={() => pickPrice(item.price)}>{formatPrice(item.price)}</button>
-                  <span className={`tone-${tone}`}>{formatNumber(delta, Math.abs(delta ?? 0) >= 1000 ? 0 : 2)}</span>
-                  <span>{formatQty(item.quantity)}</span>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-        </>}
+        {sideOpen && (
+          <OrderMarketSide
+            stream={props.stream}
+            selected={props.selected}
+            lastPrice={active?.price ?? null}
+            reference={reference}
+            ceiling={ceiling}
+            floor={floor}
+            book={props.book}
+            prints={props.prints}
+            onPickPrice={pickPrice}
+          />
+        )}
       </aside>
 
       <aside className={`order-rail${railOpen ? "" : " is-collapsed panel"}`}>

@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { DnseApiError, DnseConfigError, dnseRequest } from "@/lib/dnse/client";
 import { jsonError } from "@/lib/dnse/http";
 import { readCandles, readInstruments, readQuote } from "@/lib/dnse/normalize";
+import { loadSecdef } from "@/lib/dnse/secdef-cache";
 import { parseResolution, parseSymbol } from "@/lib/dnse/validate";
 import { lookbackSeconds } from "@/lib/symbols";
 
@@ -34,7 +35,7 @@ export async function GET(request: NextRequest) {
 
   try {
     const [secdef, latest, ohlc, instruments] = await Promise.all([
-      dnseRequest(`/price/${symbol}/secdef?boardId=G1`).catch(tolerate),
+      loadSecdef(symbol, "G1").catch(tolerate),
       dnseRequest(`/price/${symbol}/trades/latest?boardId=G1`).catch(tolerate),
       dnseRequest(`/price/ohlc?${params.toString()}`).catch(tolerate),
       dnseRequest(`/instruments?symbol=${symbol}&limit=1`).catch(tolerate),
